@@ -1,0 +1,105 @@
+#!/bin/bash
+
+# From: AHK <akuhon@kompas.com>
+# To: linux-admin@linux.or.id
+
+# Save this file and activate through # file_name start
+# and de-activate through # file_name stop
+
+# This firewall-script can be used for workstation, laptop, router
+# or server that are not running network service (such as web server, ftp
+# server etc)
+
+# change the parameter UPLINK with Interface device to the Internet.
+# In our case WLAN router with NIC wlan0 connected to the Internet
+# and LAN connection with eth0.
+# if you use dial-up modem, you might use ppp0 as your UPLINK
+
+UPLINK="eth1"
+
+# if you run the gateway as router and forward IP packet between eth devices
+# please fill .yes., if not, please fill .no.
+
+ROUTER="yes"
+
+# Please change 202.150.10.45 to your static IP address of UPLINK device.
+# For those who use dial-up or dynamic IP, please enter .dynamic.
+
+# NAT="192.168.1.100"
+
+NAT="dynamic" 
+
+# please list all network interfaces including eth devices
+# as well as dial-up interface such as ppp0
+
+INTERFACES="lo eth0 eth1 eth2"
+
+if [ "$1" = "start" ]
+  then
+  echo "Activate Firewall ..... "
+  /sbin/iptables -F
+  /sbin/iptables -P INPUT DROP
+#  /sbin/iptables -A INPUT -p tcp -i eth0 --destination-port 25 -s ! 192.168.0.1  -j DROP
+#  /sbin/iptables -A INPUT -p tcp -i eth1 --destination-port 25 -s ! 192.168.0.1  -j DROP
+
+  /sbin/iptables -A INPUT -i ! ${UPLINK} -j ACCEPT
+  /sbin/iptables -A INPUT -i ${UPLINK} -p tcp -s 0/0 --dport 25 -j ACCEPT
+  /sbin/iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+  /sbin/iptables -A INPUT -p tcp -i ${UPLINK} -j REJECT --reject-with tcp-reset
+  /sbin/iptables -A INPUT -p udp -i ${UPLINK} -j REJECT --reject-with icmp-port-unreachable
+ 
+  /sbin/iptables -A FORWARD -p tcp --destination-port 25 -s ! 192.168.0.1  -j DROP
+
+# block bad sites
+# /sbin/iptables -I INPUT -s 68.178.211.34 -j DROP
+# /sbin/iptables -I INPUT -d 68.178.211.34 -j DROP 
+# /sbin/iptables -I INPUT -s 64.27.5.168 -j DROP
+# /sbin/iptables -I INPUT -d 64.27.5.168 -j DROP
+
+# turn off packet spoofing in all interfaces
+for x in ${INTERFACES}
+  do
+    echo 1 > /proc/sys/net/ipv4/conf/${x}/rp_filter
+  done 
+
+if [ "$ROUTER" = "yes" ]
+  then
+  # Activate IP forwarding at router
+    echo 1 > /proc/sys/net/ipv4/ip_forward
+if [ "$NAT" = "dynamic" ]
+  then
+  # Dynamic IP address, activate Masquerading
+    echo "Activate Masquerading (Dynamic IP) ...."
+    /sbin/iptables -t nat -A POSTROUTING -o ${UPLINK} -j MASQUERADE
+elif [ "$NAT" != "" ]
+  then
+  # Static IP address use source NAT
+  echo "Activate SNAT (static IP) ...."
+  /sbin/iptables -t nat -A POSTROUTING -o ${UPLINK} -j SNAT --to ${NAT}
+fi 
+
+echo "Activate Transparent Proxy .."
+for x in ${INTERFACES}
+  do
+    iptables -t nat -A PREROUTING -s 192.168.0.0/24 -i eth0 -p tcp --dport 80 -j REDIRECT --to-ports 8080
+  done 
+
+# echo "Activate SMTP Port Forwarding .."
+# /sbin/iptables -t nat -A PREROUTING -i ${UPLINK} -m multiport -p tcp \
+# --dport 25 -d ${NAT} -j DNAT --to 192.168.0.254:25
+# /sbin/iptables -A FORWARD -i ${UPLINK} -m multiport -p tcp -d 192.168.0.254 \
+#  --dport 25 -j ACCEPT 
+
+fi
+  elif [ "$1" = "stop" ]
+    then
+      echo "Deactivate Firewall ..."
+      /sbin/iptables -F INPUT
+      /sbin/iptables -P INPUT ACCEPT
+      /sbin/iptables -F FORWARD
+      /sbin/iptables -P FORWARD ACCEPT
+      /sbin/iptables -F OUTPUT
+      /sbin/iptables -P OUTPUT ACCEPT
+      # Turn off NAT or MASQUERADING
+      /sbin/iptables -t nat -F POSTROUTING
+fi
